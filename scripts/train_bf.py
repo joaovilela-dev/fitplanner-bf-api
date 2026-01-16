@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script de treinamento CALIBRADO para Body Fat Prediction.
-🆕 V2: Dados sintéticos mais realistas que seguem as regras fisiológicas
+ V2: Dados sintéticos mais realistas que seguem as regras fisiológicas
 """
 
 import os
@@ -17,14 +17,14 @@ from datetime import datetime
 
 
 # ======================================================
-# 🆕 GERAÇÃO DE DATASET SINTÉTICO CALIBRADO
+#  GERAÇÃO DE DATASET SINTÉTICO CALIBRADO
 # ======================================================
 
 def generate_synthetic_dataset(n_samples=1500):
     """
     Gera dataset sintético CALIBRADO com as regras fisiológicas.
     
-    🆕 V2 MELHORIAS:
+     V2 MELHORIAS:
     - Body Fat calculado usando as MESMAS REGRAS do body_fat_logic.py
     - Menos ruído para evitar ML aprender padrões errados
     - Mais amostras em regiões críticas (atletas, sobrepeso)

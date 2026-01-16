@@ -2,7 +2,7 @@
 
 API backend desenvolvida em **Python + FastAPI** para **estimativa educacional de percentual de gordura corporal (Body Fat)** a partir de imagens e dados do usuário, utilizando conceitos de **Visão Computacional** e **modelagem heurística inspirada em Machine Learning**.
 
-Este serviço faz parte do ecossistema do projeto **FitPlanner**, sendo consumido pelo aplicativo mobile desenvolvido em Flutter.
+Este serviço faz parte do ecossistema do projeto **FitPlanner**, sendo consumido pelo aplicativo mobile desenvolvido em **Flutter**.
 
 ---
 
@@ -17,32 +17,32 @@ A **FitPlanner Body Fat API** recebe informações básicas do usuário (sexo, i
 
 ## 🎯 Problema que Resolve
 
-- ❌ Falta de ferramentas acessíveis para estimar percentual de gordura
-- ❌ Dependência de equipamentos caros (bioimpedância, adipômetro)
-- ❌ Dificuldade de acompanhamento inicial para usuários iniciantes
+- ❌ Falta de ferramentas acessíveis para estimar percentual de gordura  
+- ❌ Dependência de equipamentos caros (bioimpedância, adipômetro)  
+- ❌ Dificuldade de acompanhamento inicial para usuários iniciantes  
 
 ### ✅ Solução
 
-- 📸 Estimativa de Body Fat baseada em imagem
-- 📊 Cálculo combinado com dados antropométricos
-- ⚡ API rápida, simples e escalável
-- 🔗 Integração direta com aplicativo Flutter
+- 📸 Estimativa de Body Fat baseada em imagem  
+- 📊 Cálculo combinado com dados antropométricos  
+- ⚡ API rápida, simples e escalável  
+- 🔗 Integração direta com aplicativo Flutter  
 
 ---
 
 ## 🛠 Tecnologias Utilizadas
 
-**Backend**
+### Backend
 - Python 3.10+
 - FastAPI
 - Uvicorn
 
-**Visão Computacional / Modelagem**
+### Visão Computacional / Modelagem
 - OpenCV
 - NumPy
 - Scikit-learn (modelo heurístico inicial)
 
-**Outros**
+### Outros
 - Pydantic (validação de dados)
 - Pillow (processamento de imagens)
 
@@ -51,7 +51,6 @@ A **FitPlanner Body Fat API** recebe informações básicas do usuário (sexo, i
 ## 🚀 Como Executar o Projeto
 
 ### Pré-requisitos
-
 - Python 3.10 ou superior
 - pip
 - Ambiente virtual (recomendado)
@@ -60,8 +59,8 @@ A **FitPlanner Body Fat API** recebe informações básicas do usuário (sexo, i
 
 ```bash
 # Clone o repositório
-git clone https://github.com/joaovilela-dev/fitplanner-backend.git
-cd fitplanner-backend
+git clone https://github.com/joaovilela-dev/fitplanner-bf-api.git
+cd fitplanner-bf-api
 
 # Crie o ambiente virtual
 python -m venv venv
@@ -79,14 +78,10 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 A API ficará disponível em:
 
-cpp
-Copiar código
 http://127.0.0.1:8000
-Documentação automática (Swagger):
 
-arduino
-Copiar código
-http://127.0.0.1:8000/docs
+Documentação Swagger: http://127.0.0.1:8000/docs
+
 📡 Principais Endpoints
 🔹 Estimar Body Fat
 POST /estimate-bodyfat
@@ -117,14 +112,14 @@ Copiar código
 🧠 Arquitetura do Projeto
 css
 Copiar código
-fitplanner-backend/
-├── main.py
+fitplanner-bf-api/
+├── app/
+│   ├── services/
+│   ├── utils/
+│   └── schemas.py
 ├── models/
-│   └── bodyfat_model.py
-├── services/
-│   └── image_processing.py
-├── utils/
-│   └── calculations.py
+├── scripts/
+├── main.py
 ├── requirements.txt
 └── README.md
 🔐 Boas Práticas e Segurança
@@ -139,7 +134,7 @@ Código modular e escalável
 🔗 Integração com o Frontend
 Este backend é consumido pelo aplicativo FitPlanner Frontend (Flutter):
 
-👉 FitPlanner Frontend
+👉 https://github.com/joaovilela-dev/fitplanner
 
 📝 Roadmap
 ✅ Implementado

@@ -1,0 +1,402 @@
+"""
+Análise de textura da imagem para detectar definição muscular - V2 CALIBRADO
+🆕 Melhorias:
+- Thresholds mais rigorosos para abs e vascularização
+- Penalização por gordura abdominal central
+- Melhor separação entre físicos distintos
+- Correção quando C/Q > 0.90 (cintura larga)
+"""
+
+import cv2
+import numpy as np
+from typing import Optional
+
+
+def analyze_muscle_definition(image_path: str, landmarks=None) -> dict:
+    """
+    Analisa definição muscular na imagem - V2 CALIBRADO
+    
+    🆕 V2 Melhorias:
+    - Thresholds mais rigorosos (abs_visibility, vascularity)
+    - Detecção de gordura abdominal central
+    - Melhor discriminação entre físicos
+    
+    Returns:
+        {
+            "definition_score": float (0-1),
+            "abs_visibility": float (0-1),
+            "vascularity": float (0-1),
+            "muscle_separation": float (0-1),
+            "subcutaneous_fat": float (0-1),
+            "confidence": float (0-1)
+        }
+    """
+    
+    try:
+        # Carregar imagem
+        image = cv2.imread(image_path)
+        if image is None:
+            return _get_default_result()
+        
+        # Converter para escala de cinza
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # ===================================
+        # 1️⃣ ANÁLISE DE TEXTURA GLOBAL
+        # ===================================
+        texture_score = _analyze_texture_complexity(gray)
+        
+        # ===================================
+        # 2️⃣ DETECÇÃO DE BORDAS (separação muscular)
+        # ===================================
+        edge_score = _detect_muscle_edges(gray)
+        
+        # ===================================
+        # 3️⃣ ANÁLISE DE CONTRASTE (definição)
+        # ===================================
+        contrast_score = _analyze_local_contrast(gray)
+        
+        # ===================================
+        # 4️⃣ ANÁLISE DA REGIÃO ABDOMINAL - 🆕 CALIBRADO
+        # ===================================
+        abs_score = _analyze_abdominal_region_v2(image, gray, landmarks)
+        
+        # ===================================
+        # 5️⃣ VASCULARIZAÇÃO - 🆕 CALIBRADO
+        # ===================================
+        vascularity_score = _detect_vascularity_v2(gray)
+        
+        # ===================================
+        # 🆕 6️⃣ DETECÇÃO DE GORDURA ABDOMINAL CENTRAL
+        # ===================================
+        central_fat_score = _detect_central_fat(gray)
+        
+        # ===================================
+        # 7️⃣ SUAVIDADE DA PELE (gordura subcutânea)
+        # ===================================
+        smoothness = _analyze_skin_smoothness(gray)
+        fat_score = 1.0 - smoothness
+        
+        # ===================================
+        # 🆕 SCORE FINAL DE DEFINIÇÃO - V2
+        # ===================================
+        # Pesos ajustados para melhor discriminação
+        definition_score = (
+            texture_score * 0.15 +
+            edge_score * 0.20 +
+            contrast_score * 0.15 +
+            abs_score * 0.30 +          # 🆕 Aumentado de 0.25
+            vascularity_score * 0.15 +   # 🆕 Aumentado de 0.10
+            (1.0 - central_fat_score) * 0.05  # 🆕 NOVO: penalizar gordura central
+        )
+        
+        # 🆕 PENALIZAÇÃO ADICIONAL por gordura central
+        if central_fat_score > 0.6:
+            definition_score *= 0.85  # Reduz 15%
+        
+        # Confiança baseada na qualidade da imagem
+        confidence = _calculate_confidence(image, gray)
+        
+        return {
+            "definition_score": round(float(definition_score), 3),
+            "abs_visibility": round(float(abs_score), 3),
+            "vascularity": round(float(vascularity_score), 3),
+            "muscle_separation": round(float(edge_score), 3),
+            "subcutaneous_fat": round(float(fat_score), 3),
+            "central_fat": round(float(central_fat_score), 3),  # 🆕 NOVO
+            "texture_complexity": round(float(texture_score), 3),
+            "local_contrast": round(float(contrast_score), 3),
+            "confidence": round(float(confidence), 3)
+        }
+        
+    except Exception as e:
+        print(f"⚠️ Erro na análise de textura: {e}")
+        return _get_default_result()
+
+
+def _analyze_texture_complexity(gray: np.ndarray) -> float:
+    """Analisa complexidade da textura usando Variância de Laplaciano"""
+    laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+    variance = laplacian.var()
+    normalized = min(variance / 500, 1.0)
+    return normalized
+
+
+def _detect_muscle_edges(gray: np.ndarray) -> float:
+    """Detecta bordas que indicam separação muscular"""
+    edges = cv2.Canny(gray, 50, 150)
+    edge_density = np.count_nonzero(edges) / edges.size
+    normalized = min(edge_density / 0.08, 1.0)
+    return normalized
+
+
+def _analyze_local_contrast(gray: np.ndarray) -> float:
+    """Analisa contraste local"""
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    local_std = np.abs(gray.astype(float) - blurred.astype(float))
+    contrast = local_std.mean()
+    normalized = min(contrast / 20, 1.0)
+    return normalized
+
+
+def _analyze_abdominal_region_v2(image: np.ndarray, gray: np.ndarray, landmarks) -> float:
+    """
+    Análise da região abdominal - 🆕 V2 CALIBRADO
+    
+    Melhorias:
+    - Thresholds mais rigorosos
+    - Análise horizontal E vertical
+    - Penalização por gordura visível
+    """
+    h, w = gray.shape
+    
+    # ROI: Centro-baixo da imagem (região típica do abdômen)
+    y_start = int(h * 0.40)
+    y_end = int(h * 0.70)
+    x_start = int(w * 0.35)
+    x_end = int(w * 0.65)
+    
+    roi = gray[y_start:y_end, x_start:x_end]
+    
+    if roi.size == 0:
+        return 0.5
+    
+    # 1. Bordas horizontais (separação dos músculos abdominais)
+    edges_h = cv2.Sobel(roi, cv2.CV_64F, 0, 1, ksize=3)
+    horizontal_features = np.abs(edges_h).mean()
+    
+    # 2. Bordas verticais (linha alba central)
+    edges_v = cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3)
+    vertical_features = np.abs(edges_v).mean()
+    
+    # 3. Variância (textura rica = músculos)
+    roi_variance = roi.var()
+    
+    # 🆕 4. Desvio padrão (mais variação = mais definição)
+    roi_std = roi.std()
+    
+    # 🆕 THRESHOLDS MUITO MAIS RIGOROSOS
+    # Para ter abs_score > 0.80, precisa:
+    # - horizontal > 35 (antes: 30)
+    # - vertical > 30 (antes: 25)
+    # - variance > 1800 (antes: 1500)
+    # - std > 40 (novo)
+    
+    abs_score = (
+        min(horizontal_features / 35, 1.0) * 0.35 +  # 🆕 35 (era 30)
+        min(vertical_features / 30, 1.0) * 0.25 +    # 🆕 30 (era 25)
+        min(roi_variance / 1800, 1.0) * 0.25 +       # 🆕 1800 (era 1500)
+        min(roi_std / 40, 1.0) * 0.15                # 🆕 NOVO critério
+    )
+    
+    # 🆕 PENALIZAÇÃO FORTE se valores muito baixos
+    if horizontal_features < 15:
+        abs_score *= 0.4  # Era 0.5
+    
+    if vertical_features < 10:
+        abs_score *= 0.6  # 🆕 NOVO
+    
+    return abs_score
+
+
+def _detect_vascularity_v2(gray: np.ndarray) -> float:
+    """
+    Detecta veias visíveis - 🆕 V2 CALIBRADO
+    
+    Melhorias:
+    - Threshold mais rigoroso
+    - Filtro de ruído melhorado
+    """
+    # Equalização de histograma
+    equalized = cv2.equalizeHist(gray)
+    
+    # Detecção de estruturas finas (veias)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 3))
+    tophat = cv2.morphologyEx(equalized, cv2.MORPH_TOPHAT, kernel)
+    
+    # Threshold adaptativo
+    _, veins = cv2.threshold(tophat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # 🆕 Remover ruído pequeno (pixels isolados)
+    kernel_clean = np.ones((2, 2), np.uint8)
+    veins = cv2.morphologyEx(veins, cv2.MORPH_OPEN, kernel_clean)
+    
+    # Densidade de pixels de "veias"
+    vein_density = np.count_nonzero(veins) / veins.size
+    
+    # 🆕 THRESHOLD MUITO MAIS RIGOROSO
+    # Para ter vascularity > 0.80, precisa vein_density > 0.05 (era 0.04)
+    # Para ter vascularity > 0.90, precisa vein_density > 0.07
+    normalized = min(vein_density / 0.05, 1.0)
+    
+    # 🆕 PENALIZAÇÃO se density muito baixa
+    if vein_density < 0.015:
+        normalized *= 0.5
+    
+    return normalized
+
+
+def _detect_central_fat(gray: np.ndarray) -> float:
+    """
+    🆕 V2: Detecta gordura abdominal central
+    
+    Gordura central aparece como região de baixo contraste e alta suavidade
+    na região do abdômen.
+    
+    Returns:
+        float: 0 = sem gordura, 1 = muita gordura central
+    """
+    h, w = gray.shape
+    
+    # ROI: região central do abdômen
+    y_start = int(h * 0.45)
+    y_end = int(h * 0.65)
+    x_start = int(w * 0.40)
+    x_end = int(w * 0.60)
+    
+    roi = gray[y_start:y_end, x_start:x_end]
+    
+    if roi.size == 0:
+        return 0.0
+    
+    # 1. Suavidade (gordura é lisa)
+    blurred = cv2.GaussianBlur(roi, (9, 9), 0)
+    difference = np.abs(roi.astype(float) - blurred.astype(float))
+    smoothness = 1.0 - min(difference.mean() / 15, 1.0)
+    
+    # 2. Baixo contraste (gordura não tem textura)
+    roi_std = roi.std()
+    low_contrast = 1.0 - min(roi_std / 35, 1.0)
+    
+    # 3. Uniformidade de intensidade
+    hist = cv2.calcHist([roi], [0], None, [256], [0, 256])
+    hist_normalized = hist / hist.sum()
+    # Entropia: baixa = uniforme (gordura), alta = variada (músculo)
+    entropy = -np.sum(hist_normalized * np.log2(hist_normalized + 1e-10))
+    uniformity = 1.0 - min(entropy / 7.0, 1.0)
+    
+    # Score final de gordura central
+    fat_score = (
+        smoothness * 0.40 +
+        low_contrast * 0.35 +
+        uniformity * 0.25
+    )
+    
+    return fat_score
+
+
+def _analyze_skin_smoothness(gray: np.ndarray) -> float:
+    """Mede suavidade da pele"""
+    blurred = cv2.GaussianBlur(gray, (15, 15), 0)
+    difference = np.abs(gray.astype(float) - blurred.astype(float))
+    smoothness_score = 1.0 - min(difference.mean() / 10, 1.0)
+    return smoothness_score
+
+
+def _calculate_confidence(image: np.ndarray, gray: np.ndarray) -> float:
+    """Calcula confiança da análise baseada na qualidade da imagem"""
+    h, w = gray.shape
+    
+    # 1. Resolução
+    resolution_score = min((h * w) / (640 * 480), 1.0)
+    
+    # 2. Iluminação
+    mean_brightness = gray.mean()
+    brightness_score = 1.0 - abs(mean_brightness - 128) / 128
+    
+    # 3. Contraste
+    contrast = gray.std()
+    contrast_score = min(contrast / 50, 1.0)
+    
+    # 4. Foco
+    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    focus_score = min(laplacian_var / 300, 1.0)
+    
+    confidence = (
+        resolution_score * 0.25 +
+        brightness_score * 0.25 +
+        contrast_score * 0.25 +
+        focus_score * 0.25
+    )
+    
+    return confidence
+
+
+def _get_default_result() -> dict:
+    """Resultado padrão em caso de erro"""
+    return {
+        "definition_score": 0.5,
+        "abs_visibility": 0.5,
+        "vascularity": 0.5,
+        "muscle_separation": 0.5,
+        "subcutaneous_fat": 0.5,
+        "central_fat": 0.5,
+        "texture_complexity": 0.5,
+        "local_contrast": 0.5,
+        "confidence": 0.3
+    }
+
+
+def estimate_bf_from_definition(definition_data: dict, sex: str, bmi: float) -> float:
+    """
+    Estima BF baseado em definição muscular - 🆕 V2 CALIBRADO
+    
+    Melhorias:
+    - Thresholds mais rigorosos
+    - Penalização por gordura central
+    - Melhor separação entre físicos distintos
+    """
+    
+    definition_score = definition_data["definition_score"]
+    abs_visibility = definition_data["abs_visibility"]
+    vascularity = definition_data["vascularity"]
+    central_fat = definition_data.get("central_fat", 0.5)  # 🆕 NOVO
+    
+    # Score combinado ponderado
+    visual_score = (
+        definition_score * 0.45 +    # Reduzido de 0.50
+        abs_visibility * 0.35 +      # Mantido
+        vascularity * 0.20           # Aumentado de 0.15
+    )
+    
+    # 🆕 PENALIZAÇÃO por gordura central
+    if central_fat > 0.6:
+        visual_score *= 0.80  # Reduz 20%
+    elif central_fat > 0.5:
+        visual_score *= 0.90  # Reduz 10%
+    
+    # 🆕 Mapping NÃO-LINEAR CALIBRADO
+    if sex == "male":
+        # 🆕 Thresholds mais rigorosos para homens
+        if visual_score > 0.80:  # Era 0.75
+            bf_estimate = 7 + (1.0 - visual_score) * 25  # 7-12%
+        elif visual_score > 0.65:  # Era 0.55
+            bf_estimate = 12 + (0.80 - visual_score) * 30  # 12-16.5%
+        elif visual_score > 0.45:  # Era 0.35
+            bf_estimate = 16.5 + (0.65 - visual_score) * 35  # 16.5-23.5%
+        else:
+            bf_estimate = 23.5 + (0.45 - visual_score) * 50  # 23.5-46%
+    else:
+        # 🆕 Thresholds mais rigorosos para mulheres
+        if visual_score > 0.75:  # Era 0.70
+            bf_estimate = 15 + (1.0 - visual_score) * 24  # 15-21%
+        elif visual_score > 0.55:  # Era 0.50
+            bf_estimate = 21 + (0.75 - visual_score) * 28  # 21-26.6%
+        elif visual_score > 0.35:  # Era 0.30
+            bf_estimate = 26.6 + (0.55 - visual_score) * 40  # 26.6-34.6%
+        else:
+            bf_estimate = 34.6 + (0.35 - visual_score) * 50  # 34.6-52.1%
+    
+    # 🆕 AJUSTE FORTE por BMI (sanity check mais rigoroso)
+    if bmi < 20 and bf_estimate > 18:
+        bf_estimate = 10 + (bmi - 18) * 3  # Mais agressivo
+    elif bmi > 30 and bf_estimate < 22:
+        bf_estimate = 22 + (bmi - 30) * 2  # Mais agressivo
+    
+    # 🆕 PENALIZAÇÃO ADICIONAL por gordura central alta
+    if central_fat > 0.7:
+        bf_estimate = min(bf_estimate + 4, 50 if sex == "female" else 45)
+    elif central_fat > 0.6:
+        bf_estimate = min(bf_estimate + 2, 50 if sex == "female" else 45)
+    
+    return round(bf_estimate, 1)

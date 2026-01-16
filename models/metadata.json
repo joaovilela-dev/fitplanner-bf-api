@@ -1,0 +1,55 @@
+{
+  "trained_at": "2025-12-28T15:30:26.174884",
+  "version": "2.0 - Calibrated",
+  "n_samples": 1850,
+  "features": [
+    "age",
+    "bmi",
+    "sex",
+    "shoulder_width",
+    "hip_width",
+    "height_ratio",
+    "waist_ratio",
+    "volume_indicator",
+    "waist_prominence"
+  ],
+  "model_type": "RandomForestRegressor",
+  "feature_importance": [
+    {
+      "feature": "bmi",
+      "importance": 0.3537306345258638
+    },
+    {
+      "feature": "waist_ratio",
+      "importance": 0.3331115597319586
+    },
+    {
+      "feature": "volume_indicator",
+      "importance": 0.1753446627316813
+    },
+    {
+      "feature": "waist_prominence",
+      "importance": 0.07285835410898796
+    },
+    {
+      "feature": "sex",
+      "importance": 0.033263119794516106
+    },
+    {
+      "feature": "shoulder_width",
+      "importance": 0.01740420423076184
+    },
+    {
+      "feature": "age",
+      "importance": 0.008791650150460512
+    },
+    {
+      "feature": "hip_width",
+      "importance": 0.0031121036176879296
+    },
+    {
+      "feature": "height_ratio",
+      "importance": 0.0023837111080818965
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+# Ambiente virtual
+venv/
+
+# Variáveis de ambiente
+.env
+
+# Cache Python
+__pycache__/
+*.pyc
+
+# Logs
+logs/
+*.log
+
+# Arquivos temporários
+temp_images/
+test_images/
+
+# Modelos grandes (ML)
+*.pt
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Imagens de teste
+images/
+
+# Arquivos soltos / versões
+1.8.0

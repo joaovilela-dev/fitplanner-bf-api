@@ -1,0 +1,356 @@
+"""
+Sistema ENSEMBLE de predição de Body Fat - V2 MELHORADO
+Combina 3 métodos com ajuste dinâmico de pesos:
+1. Modelo ML (Random Forest)
+2. Regras fisiológicas
+3. Análise de textura/definição muscular
+
+🆕 V2: Ajuste inteligente de pesos baseado em casos especiais e inconsistências
+"""
+
+import numpy as np
+from typing import Optional
+
+
+def ensemble_predict_body_fat(
+    ml_prediction: float,
+    rules_prediction: float,
+    texture_data: dict,
+    bmi: float,
+    sex: str,
+    measurements: dict,
+    ratios: dict,
+    confidence_threshold: float = 0.6
+) -> dict:
+    """
+    Predição ENSEMBLE com ajuste dinâmico de pesos.
+    
+    🆕 V2 Features:
+    - Detecção de 5 casos especiais
+    - Redução automática do peso do ML quando diverge das regras
+    - Correção de inconsistências fisiológicas (BMI vs BF)
+    - Pesos originais salvos para comparação
+    
+    Args:
+        ml_prediction: Predição do modelo ML
+        rules_prediction: Predição baseada em regras
+        texture_data: Dados de análise de textura
+        bmi: Índice de Massa Corporal
+        sex: "male" ou "female"
+        measurements: Medições corporais
+        ratios: Razões corporais
+        confidence_threshold: Threshold para usar apenas métodos confiáveis
+    
+    Returns:
+        {
+            "final_prediction": float,
+            "ml_prediction": float,
+            "rules_prediction": float,
+            "texture_prediction": float,
+            "ensemble_weights": dict (pesos ajustados),
+            "original_weights": dict (pesos antes dos ajustes),
+            "confidence": float,
+            "method_used": str,
+            "adjustments": list,
+            "special_cases": dict
+        }
+    """
+    
+    adjustments = []
+    
+    # ===================================
+    # 1️⃣ PREDIÇÃO BASEADA EM TEXTURA
+    # ===================================
+    from app.services.texture_analyzer import estimate_bf_from_definition
+    texture_prediction = estimate_bf_from_definition(texture_data, sex, bmi)
+    
+    # ===================================
+    # 2️⃣ CALCULAR CONFIANÇA INICIAL
+    # ===================================
+    
+    # ML: Confiança baseada em features dentro do range de treinamento
+    ml_confidence = _calculate_ml_confidence(measurements, ratios, bmi)
+    
+    # Regras: Sempre tem confiança moderada
+    rules_confidence = 0.7
+    
+    # Textura: Confiança da análise de imagem
+    texture_confidence = texture_data.get("confidence", 0.5)
+    
+    # Salvar pesos originais para comparação
+    original_ml_conf = ml_confidence
+    original_rules_conf = rules_confidence
+    original_texture_conf = texture_confidence
+    
+    print(f"\n📊 ENSEMBLE V2 - Confianças Iniciais:")
+    print(f"   ML:      {ml_confidence:.2f}")
+    print(f"   Regras:  {rules_confidence:.2f}")
+    print(f"   Textura: {texture_confidence:.2f}")
+    
+    # ===================================
+    # 3️⃣ DETECTAR DIVERGÊNCIAS EXTREMAS
+    # ===================================
+    predictions = [ml_prediction, rules_prediction, texture_prediction]
+    pred_std = np.std(predictions)
+    
+    if pred_std > 8:  # Divergência muito alta (>8%)
+        adjustments.append(
+            f"⚠️ Alta divergência entre métodos (std={pred_std:.1f}%)"
+        )
+        print(f"   ⚠️ DIVERGÊNCIA ALTA: {pred_std:.1f}%")
+    
+    # ===================================
+    # 🆕 4️⃣ DETECÇÃO DE CASOS ESPECIAIS E AJUSTES
+    # ===================================
+    
+    # Extrair métricas relevantes
+    definition_score = texture_data.get("definition_score", 0.5)
+    abs_visibility = texture_data.get("abs_visibility", 0.5)
+    waist_to_shoulder = ratios.get("waist_to_shoulder", 0.6)
+    volume_indicator = measurements.get("volume_indicator", 0.15)
+    
+    # --- CASO 1: ATLETA ---
+    is_athlete = (
+        definition_score > 0.65 and
+        abs_visibility > 0.60 and
+        20 <= bmi <= 26
+    )
+    
+    if is_athlete:
+        adjustments.append("🏋️ Físico atlético detectado - Priorizando análise visual")
+        print("   🏋️ ATLETA DETECTADO")
+        
+        # Aumentar peso da textura, reduzir ML
+        texture_confidence = min(texture_confidence * 1.4, 1.0)  # +40%
+        ml_confidence *= 0.65  # -35%
+        rules_confidence *= 0.9  # -10%
+    
+    # --- CASO 2: SOBREPESO ---
+    is_overweight = (
+        bmi > 28 and
+        waist_to_shoulder > 0.65
+    )
+    
+    if is_overweight:
+        adjustments.append("📈 Sobrepeso detectado - Priorizando regras fisiológicas")
+        print("   📈 SOBREPESO DETECTADO")
+        
+        # Aumentar peso das regras, reduzir textura
+        rules_confidence = min(rules_confidence * 1.5, 1.0)  # +50%
+        texture_confidence *= 0.7  # -30%
+        ml_confidence *= 0.8  # -20%
+    
+    # --- CASO 3: DIVERGÊNCIA ML vs REGRAS ---
+    ml_rules_diff = abs(ml_prediction - rules_prediction)
+    
+    if ml_rules_diff > 10:
+        adjustments.append(f"⚠️ Alta divergência ML vs Regras ({ml_rules_diff:.1f}%)")
+        print(f"   ⚠️ ML vs Regras: diferença de {ml_rules_diff:.1f}% - Reduzindo peso do ML")
+        
+        # ML provavelmente está errado
+        ml_confidence *= 0.5  # -50%
+        rules_confidence = min(rules_confidence * 1.3, 1.0)  # +30%
+    
+    # --- 🆕 CASO 4: INCONSISTÊNCIA BMI BAIXO + BF ALTO ---
+    is_low_bmi_high_bf = (
+        bmi < 22 and
+        ml_prediction > 20
+    )
+    
+    if is_low_bmi_high_bf:
+        adjustments.append(
+            f"⚠️ Inconsistência: BMI baixo ({bmi:.1f}) mas ML prevê BF alto ({ml_prediction:.1f}%)"
+        )
+        print(f"   ⚠️ BMI BAIXO + BF ALTO DETECTADO")
+        
+        # ML está claramente errado
+        ml_confidence *= 0.4  # -60%
+        rules_confidence = min(rules_confidence * 1.4, 1.0)  # +40%
+        texture_confidence = min(texture_confidence * 1.3, 1.0)  # +30%
+    
+    # --- 🆕 CASO 5: INCONSISTÊNCIA BMI ALTO + BF BAIXO ---
+    is_high_bmi_low_bf = (
+        bmi > 28 and
+        ml_prediction < 20
+    )
+    
+    if is_high_bmi_low_bf:
+        adjustments.append(
+            f"⚠️ Inconsistência: BMI alto ({bmi:.1f}) mas ML prevê BF baixo ({ml_prediction:.1f}%)"
+        )
+        print(f"   ⚠️ BMI ALTO + BF BAIXO DETECTADO")
+        
+        # ML está claramente errado
+        ml_confidence *= 0.4  # -60%
+        rules_confidence = min(rules_confidence * 1.5, 1.0)  # +50%
+    
+    # --- CASO 6: IMAGEM DE BAIXA QUALIDADE ---
+    if texture_confidence < 0.4:
+        adjustments.append("📸 Qualidade de imagem baixa - Priorizando antropometria")
+        print("   📸 BAIXA QUALIDADE DE IMAGEM")
+        
+        ml_confidence = min(ml_confidence * 1.2, 1.0)  # +20%
+        rules_confidence = min(rules_confidence * 1.1, 1.0)  # +10%
+        texture_confidence *= 0.8  # -20%
+    
+    # ===================================
+    # 5️⃣ NORMALIZAR CONFIANÇAS
+    # ===================================
+    total_confidence = ml_confidence + rules_confidence + texture_confidence
+    
+    if total_confidence > 0:
+        ml_weight = ml_confidence / total_confidence
+        rules_weight = rules_confidence / total_confidence
+        texture_weight = texture_confidence / total_confidence
+    else:
+        # Fallback: pesos iguais
+        ml_weight = rules_weight = texture_weight = 1/3
+    
+    # Calcular pesos originais (antes dos ajustes)
+    original_total = original_ml_conf + original_rules_conf + original_texture_conf
+    original_ml_weight = original_ml_conf / original_total
+    original_rules_weight = original_rules_conf / original_total
+    original_texture_weight = original_texture_conf / original_total
+    
+    # 🆕 LOG de mudanças de pesos
+    print(f"\n🎯 ENSEMBLE V2 - Ajustes de Pesos:")
+    print(f"   ML:      {original_ml_weight:.3f} → {ml_weight:.3f} ({(ml_weight-original_ml_weight)*100:+.1f}%)")
+    print(f"   Regras:  {original_rules_weight:.3f} → {rules_weight:.3f} ({(rules_weight-original_rules_weight)*100:+.1f}%)")
+    print(f"   Textura: {original_texture_weight:.3f} → {texture_weight:.3f} ({(texture_weight-original_texture_weight)*100:+.1f}%)")
+    
+    # ===================================
+    # 6️⃣ ENSEMBLE - VOTAÇÃO PONDERADA
+    # ===================================
+    ensemble_prediction = (
+        ml_prediction * ml_weight +
+        rules_prediction * rules_weight +
+        texture_prediction * texture_weight
+    )
+    
+    print(f"\n🎯 ENSEMBLE V2 - Predições:")
+    print(f"   ML:      {ml_prediction:.1f}% (peso {ml_weight:.2f})")
+    print(f"   Regras:  {rules_prediction:.1f}% (peso {rules_weight:.2f})")
+    print(f"   Textura: {texture_prediction:.1f}% (peso {texture_weight:.2f})")
+    print(f"   → ENSEMBLE: {ensemble_prediction:.1f}%")
+    
+    # ===================================
+    # 7️⃣ VALIDAÇÃO FISIOLÓGICA FINAL
+    # ===================================
+    from app.services.bf_validator import validate_and_adjust_bf
+    
+    validation = validate_and_adjust_bf(
+        bf_prediction=ensemble_prediction,
+        bmi=bmi,
+        sex=sex,
+        measurements=measurements,
+        ratios=ratios
+    )
+    
+    final_prediction = validation["adjusted_bf"]
+    
+    if validation["was_adjusted"]:
+        adjustments.append(
+            f"🔧 Validação final: {ensemble_prediction:.1f}% → {final_prediction:.1f}% "
+            f"({validation['reason']})"
+        )
+        print(f"   🔧 VALIDAÇÃO: {ensemble_prediction:.1f}% → {final_prediction:.1f}%")
+    
+    print(f"   ✅ FINAL: {final_prediction:.1f}%")
+    
+    # ===================================
+    # 8️⃣ CONFIANÇA FINAL
+    # ===================================
+    # Confiança é maior quando métodos concordam
+    agreement = 1.0 - (pred_std / 20)  # Penalizar divergência
+    avg_confidence = (ml_confidence + rules_confidence + texture_confidence) / 3
+    
+    final_confidence = (agreement * 0.6 + avg_confidence * 0.4)
+    final_confidence = max(0.3, min(final_confidence, 1.0))
+    
+    # ===================================
+    # 🆕 RESULTADO COM PESOS ORIGINAIS
+    # ===================================
+    return {
+        "final_prediction": round(final_prediction, 1),
+        "ml_prediction": round(ml_prediction, 1),
+        "rules_prediction": round(rules_prediction, 1),
+        "texture_prediction": round(texture_prediction, 1),
+        "ensemble_raw": round(ensemble_prediction, 1),
+        
+        # 🆕 Pesos ajustados
+        "ensemble_weights": {
+            "ml": round(ml_weight, 3),
+            "rules": round(rules_weight, 3),
+            "texture": round(texture_weight, 3)
+        },
+        
+        # 🆕 Pesos originais (antes dos ajustes)
+        "original_weights": {
+            "ml": round(original_ml_weight, 3),
+            "rules": round(original_rules_weight, 3),
+            "texture": round(original_texture_weight, 3)
+        },
+        
+        # 🆕 Diferenças de pesos
+        "weight_changes": {
+            "ml": round((ml_weight - original_ml_weight) * 100, 1),
+            "rules": round((rules_weight - original_rules_weight) * 100, 1),
+            "texture": round((texture_weight - original_texture_weight) * 100, 1)
+        },
+        
+        "confidence": round(final_confidence, 2),
+        "confidence_level": _get_confidence_level(final_confidence),
+        "method_used": "Ensemble V2 (ML + Rules + Texture + Dynamic Weights)",
+        "adjustments": adjustments,
+        "texture_analysis": texture_data,
+        
+        # 🆕 Casos especiais detectados
+        "special_cases": {
+            "is_athlete": is_athlete,
+            "is_overweight": is_overweight,
+            "low_bmi_high_bf": is_low_bmi_high_bf,
+            "high_bmi_low_bf": is_high_bmi_low_bf,
+            "low_image_quality": texture_confidence < 0.4,
+            "ml_rules_divergence": ml_rules_diff > 10
+        }
+    }
+
+
+def _calculate_ml_confidence(measurements: dict, ratios: dict, bmi: float) -> float:
+    """
+    Calcula confiança do modelo ML baseado em:
+    - Features dentro do range de treinamento
+    - Qualidade das medições
+    """
+    
+    confidence = 1.0
+    
+    # BMI típico: 18-35
+    if bmi < 18 or bmi > 35:
+        confidence *= 0.8
+    
+    # Waist ratio típico: 0.40-0.75
+    waist_ratio = ratios.get("waist_to_shoulder", 0.6)
+    if waist_ratio < 0.35 or waist_ratio > 0.80:
+        confidence *= 0.85
+    
+    # Volume indicator típico: 0.12-0.30
+    volume = measurements.get("volume_indicator", 0.15)
+    if volume < 0.10 or volume > 0.35:
+        confidence *= 0.9
+    
+    return confidence
+
+
+def _get_confidence_level(confidence: float) -> str:
+    """Retorna nível textual de confiança"""
+    if confidence >= 0.85:
+        return "Muito Alta"
+    elif confidence >= 0.70:
+        return "Alta"
+    elif confidence >= 0.55:
+        return "Média"
+    elif confidence >= 0.40:
+        return "Baixa"
+    else:
+        return "Muito Baixa"
